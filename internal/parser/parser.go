@@ -15,7 +15,7 @@ type Parser struct {
 }
 
 func (p *Parser) Reset() {
-	p = NewParser()
+	*p = *NewParser()
 }
 
 func NewParser() *Parser {

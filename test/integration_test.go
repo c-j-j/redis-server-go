@@ -1,17 +1,16 @@
-package main
+package test
 
 import (
 	"bufio"
 	"net"
+	"redis-go/internal/server"
 	"testing"
 	"time"
 )
 
 func startRedisServer() {
-	// Replace this function with your actual Redis server startup logic.
-	// For example, you might call your server's `main` function in a goroutine.
 	go func() {
-		main() // Assuming your Redis server has a main function
+		server.StartServer()
 	}()
 	// Give the server time to start
 	time.Sleep(1 * time.Second)
