@@ -3,6 +3,7 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"redis-go/internal/message"
 	"strconv"
 	"strings"
@@ -27,37 +28,48 @@ func NewParser() *Parser {
 	return &parser
 }
 
-func (p *Parser) ReadNext(message string) (*message.Message, error) {
-	message = strings.TrimSpace(message)
-	if message[0] == '*' {
-		rest := message[1:]
-		length, err := strconv.Atoi(rest)
+func ReadMessage(message string) (*message.Message, error) {
+	lines := strings.Split(message, "\r\n")
+	parser := NewParser()
 
-		if err != nil {
-			fmt.Printf("Error converting '%s' to int, because of error %v", rest, err)
-			return nil, errors.New("Invalid message")
-		}
-		p.nextArrayLength = &length
-	} else if message[0] == '$' {
-		rest := message[1:]
-		length, err := strconv.Atoi(rest)
+	slog.Debug("HERE:")
+	for _, line := range lines {
+		message = strings.TrimSpace(line)
+		slog.Debug("MESSAGE:")
+		slog.Debug(message)
 
-		if err != nil {
-			fmt.Printf("Error converting '%s' to int, because of error %v", rest, err)
-			return nil, errors.New("Invalid message")
-		}
-		p.nextStringLength = &length
-	} else if p.nextStringLength != nil {
-		if *p.nextStringLength != len(message) {
-			fmt.Printf("Received string %s has unexpected length. Expected %d", message, *p.nextStringLength)
-			return nil, errors.New("Invalid message")
-		}
-		p.currentMessage.Tokens = append(p.currentMessage.Tokens, message)
+		if message == "" {
+			parser.currentMessage.Completed = true
+		} else if message[0] == '*' {
+			rest := message[1:]
+			length, err := strconv.Atoi(rest)
 
-		if len(p.currentMessage.Tokens) == *p.nextArrayLength {
-			p.currentMessage.Completed = true
+			if err != nil {
+				fmt.Printf("Error converting '%s' to int, because of error %v", rest, err)
+				return nil, errors.New("Invalid message")
+			}
+			parser.nextArrayLength = &length
+		} else if message[0] == '$' {
+			rest := message[1:]
+			length, err := strconv.Atoi(rest)
+
+			if err != nil {
+				fmt.Printf("Error converting '%s' to int, because of error %v", rest, err)
+				return nil, errors.New("Invalid message")
+			}
+			parser.nextStringLength = &length
+		} else if parser.nextStringLength != nil {
+			if *parser.nextStringLength != len(message) {
+				slog.Error(fmt.Sprintf("Received string %s has unexpected length. Expected %d", message, *parser.nextStringLength))
+				return nil, errors.New("Invalid message")
+			}
+			parser.currentMessage.Tokens = append(parser.currentMessage.Tokens, message)
+
+			if len(parser.currentMessage.Tokens) == *parser.nextArrayLength {
+				parser.currentMessage.Completed = true
+			}
 		}
 	}
 
-	return &p.currentMessage, nil
+	return &parser.currentMessage, nil
 }

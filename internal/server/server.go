@@ -1,8 +1,8 @@
 package server
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -41,23 +41,31 @@ func handleRequest(connection net.Conn) {
 	defer connection.Close()
 	slog.Debug("Received new connection")
 
-	scanner := bufio.NewScanner(connection)
-	parser := parser.NewParser()
+	// scanner := bufio.NewScanner(connection)
+	buffer := make([]byte, 4096)
 
-	for scanner.Scan() {
-		input := scanner.Text()
-		slog.Debug(input)
+	for {
+		n, err := connection.Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+				slog.Debug("Client disconnected")
+				break
+			}
+			slog.Error(fmt.Sprintf("Error reading request: %v", err))
+			connection.Write([]byte("+Error reading request"))
+			break
+		}
 
-		message, err := parser.ReadNext(input)
+		input := buffer[:n]
+
+		message, err := parser.ReadMessage(string(input))
 
 		if err != nil {
 			slog.Error(fmt.Sprintf("Error parsing request: %v\n", err))
 			connection.Write([]byte("+Error parsing request"))
-			parser.Reset()
 			continue
 		} else if message.Completed {
 			response := generateResponse(message)
-			parser.Reset()
 			connection.Write([]byte(response))
 		}
 	}
