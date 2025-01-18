@@ -6,34 +6,9 @@ import (
 	"net"
 	"os"
 	"redis-go/internal/parser"
+	"redis-go/internal/storage"
 	"strings"
-	"sync"
 )
-
-type WriteRequest struct {
-	key   string
-	value string
-}
-
-type InMemoryDB struct {
-	data sync.Map
-}
-
-func newInMemoryDB() *InMemoryDB {
-	db := InMemoryDB{
-		data: sync.Map{},
-	}
-	return &db
-}
-
-func (db *InMemoryDB) writeValue(key string, value string) {
-	db.data.Store(key, value)
-}
-
-func (db *InMemoryDB) getValue(key string) (string, bool) {
-	value, ok := db.data.Load(key)
-	return fmt.Sprintf("%v", value), ok
-}
 
 func StartServer() {
 	if os.Getenv("VERBOSE") != "" {
@@ -49,7 +24,7 @@ func StartServer() {
 	}
 	defer listener.Close()
 
-	inMemoryDB := newInMemoryDB()
+	inMemoryDB := storage.NewInMemoryDB()
 
 	fmt.Printf("Server started on port %s\n", port)
 	for {
@@ -64,7 +39,7 @@ func StartServer() {
 	}
 }
 
-func handleRequest(connection net.Conn, inMemoryDB *InMemoryDB) {
+func handleRequest(connection net.Conn, inMemoryDB *storage.InMemoryDB) {
 	defer connection.Close()
 	slog.Debug("Received new connection")
 
@@ -82,7 +57,7 @@ func handleRequest(connection net.Conn, inMemoryDB *InMemoryDB) {
 	}
 }
 
-func handleResponse(message parser.RespMessage, inMemoryDB *InMemoryDB) parser.RespMessage {
+func handleResponse(message parser.RespMessage, inMemoryDB *storage.InMemoryDB) parser.RespMessage {
 	slog.Debug("Handling request")
 	slog.Debug(parser.PrintRespMessage(message))
 	switch msg := message.(type) {
@@ -124,7 +99,7 @@ func handleECHO(msg parser.RespArray) parser.RespMessage {
 	}
 }
 
-func handleSET(msg parser.RespArray, inMemoryDB *InMemoryDB) parser.RespMessage {
+func handleSET(msg parser.RespArray, inMemoryDB *storage.InMemoryDB) parser.RespMessage {
 	if len(msg) < 3 {
 		return parser.NewError("Wrong number of arguments for 'SET' command")
 	}
@@ -143,17 +118,17 @@ func handleSET(msg parser.RespArray, inMemoryDB *InMemoryDB) parser.RespMessage 
 	} else {
 		return parser.NewError("Expected string as value passed to SET")
 	}
-	inMemoryDB.writeValue(parsedKey, parsedValue)
+	inMemoryDB.WriteValue(parsedKey, parsedValue)
 	return parser.RespSimpleString("OK")
 }
 
-func handleGET(msg parser.RespArray, inMemoryDB *InMemoryDB) parser.RespMessage {
+func handleGET(msg parser.RespArray, inMemoryDB *storage.InMemoryDB) parser.RespMessage {
 	if len(msg) < 2 {
 		return parser.NewError("Wrong number of arguments for 'GET' command")
 	}
 	key := msg[1]
 	if key, ok := key.(parser.RespBulkString); ok {
-		value, ok := inMemoryDB.getValue(string(key))
+		value, ok := inMemoryDB.GetValue(string(key))
 		if !ok {
 			return parser.NewBulkString(nil)
 		}

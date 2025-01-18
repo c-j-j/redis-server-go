@@ -5,16 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"redis-go/internal/message"
 	"strconv"
 	"strings"
 )
-
-type Parser struct {
-	nextArrayLength  *int
-	currentMessage   message.Message
-	nextStringLength *int
-}
 
 type RespMessage interface {
 	ResponseString() string
@@ -150,17 +143,4 @@ func PrintRespMessage(msg RespMessage) string {
 	default:
 		return "Unknown type"
 	}
-}
-
-func (p *Parser) Reset() {
-	*p = *NewParser()
-}
-
-func NewParser() *Parser {
-	parser := Parser{
-		nextArrayLength:  nil,
-		nextStringLength: nil,
-		currentMessage:   *message.NewMessage(),
-	}
-	return &parser
 }
