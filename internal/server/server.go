@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+type Server struct {
+	db *storage.InMemoryDB
+}
+
 func StartServer() {
 	if os.Getenv("VERBOSE") != "" {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
@@ -19,6 +23,7 @@ func StartServer() {
 
 	portArg := flag.Int("port", 6379, "Port to listen on")
 	flag.Parse()
+
 	port := strconv.Itoa(*portArg)
 
 	fmt.Println("port", port)
@@ -29,8 +34,7 @@ func StartServer() {
 		os.Exit(-1)
 	}
 	defer listener.Close()
-
-	inMemoryDB := storage.NewInMemoryDB()
+	server := initServer()
 
 	fmt.Printf("Server started on port %s\n", port)
 	for {
@@ -41,11 +45,18 @@ func StartServer() {
 			os.Exit(-1)
 		}
 
-		go handleRequest(connection, inMemoryDB)
+		go server.handleRequest(connection)
 	}
 }
 
-func handleRequest(connection net.Conn, inMemoryDB *storage.InMemoryDB) {
+func initServer() Server {
+	inMemoryDB := storage.NewInMemoryDB()
+	return Server{
+		db: inMemoryDB,
+	}
+}
+
+func (s *Server) handleRequest(connection net.Conn) {
 	defer connection.Close()
 	slog.Debug("Received new connection")
 
@@ -57,13 +68,13 @@ func handleRequest(connection net.Conn, inMemoryDB *storage.InMemoryDB) {
 			break
 		}
 
-		response := handleResponse(nextMessage, inMemoryDB)
+		response := s.handleResponse(nextMessage)
 		slog.Debug("Sending response: " + response.ResponseString())
 		connection.Write([]byte(response.ResponseString()))
 	}
 }
 
-func handleResponse(message parser.RespMessage, inMemoryDB *storage.InMemoryDB) parser.RespMessage {
+func (s *Server) handleResponse(message parser.RespMessage) parser.RespMessage {
 	slog.Debug("Handling request")
 	slog.Debug(parser.PrintRespMessage(message))
 	switch msg := message.(type) {
@@ -78,11 +89,13 @@ func handleResponse(message parser.RespMessage, inMemoryDB *storage.InMemoryDB) 
 			case "PING":
 				return parser.NewSimpleString("PONG")
 			case "ECHO":
-				return handleECHO(msg)
+				return s.handleECHO(msg)
 			case "GET":
-				return handleGET(msg, inMemoryDB)
+				return s.handleGET(msg)
 			case "SET":
-				return handleSET(msg, inMemoryDB)
+				return s.handleSET(msg)
+			case "INFO":
+				return s.handleINFO(msg)
 			default:
 				slog.Debug("Invalid command sent to array", "msg", msg[0])
 				return parser.NewError("Unexpected command sent in array")
@@ -93,7 +106,7 @@ func handleResponse(message parser.RespMessage, inMemoryDB *storage.InMemoryDB) 
 	}
 }
 
-func handleECHO(msg parser.RespArray) parser.RespMessage {
+func (s *Server) handleECHO(msg parser.RespArray) parser.RespMessage {
 	if len(msg) != 2 {
 		return parser.NewError("Wrong number of arguments for 'ECHO' command")
 	}
@@ -105,7 +118,7 @@ func handleECHO(msg parser.RespArray) parser.RespMessage {
 	}
 }
 
-func handleSET(msg parser.RespArray, inMemoryDB *storage.InMemoryDB) parser.RespMessage {
+func (s *Server) handleSET(msg parser.RespArray) parser.RespMessage {
 	if len(msg) < 3 {
 		return parser.NewError("Wrong number of arguments for 'SET' command")
 	}
@@ -124,17 +137,22 @@ func handleSET(msg parser.RespArray, inMemoryDB *storage.InMemoryDB) parser.Resp
 	} else {
 		return parser.NewError("Expected string as value passed to SET")
 	}
-	inMemoryDB.WriteValue(parsedKey, parsedValue)
+	s.db.WriteValue(parsedKey, parsedValue)
 	return parser.RespSimpleString("OK")
 }
 
-func handleGET(msg parser.RespArray, inMemoryDB *storage.InMemoryDB) parser.RespMessage {
+func (s *Server) handleINFO(msg parser.RespArray) parser.RespMessage {
+	// TODO: continue from here
+	return parser.NewError("INFO not supported yet")
+}
+
+func (s *Server) handleGET(msg parser.RespArray) parser.RespMessage {
 	if len(msg) < 2 {
 		return parser.NewError("Wrong number of arguments for 'GET' command")
 	}
 	key := msg[1]
 	if key, ok := key.(parser.RespBulkString); ok {
-		value, ok := inMemoryDB.GetValue(string(key))
+		value, ok := s.db.GetValue(string(key))
 		if !ok {
 			return parser.NewBulkString(nil)
 		}
