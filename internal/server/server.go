@@ -1,12 +1,14 @@
 package server
 
 import (
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"redis-go/internal/parser"
 	"redis-go/internal/storage"
+	"strconv"
 	"strings"
 )
 
@@ -15,7 +17,11 @@ func StartServer() {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 
-	port := "6379"
+	portArg := flag.Int("port", 6379, "Port to listen on")
+	flag.Parse()
+	port := strconv.Itoa(*portArg)
+
+	fmt.Println("port", port)
 	listener, err := net.Listen("tcp", ":"+port)
 
 	if err != nil {
