@@ -2,11 +2,9 @@ package server
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
-	"redis-go/internal/message"
 	"redis-go/internal/parser"
 	"strings"
 	"sync"
@@ -70,68 +68,97 @@ func handleRequest(connection net.Conn, inMemoryDB *InMemoryDB) {
 	defer connection.Close()
 	slog.Debug("Received new connection")
 
-	// scanner := bufio.NewScanner(connection)
-	buffer := make([]byte, 4096)
-
 	for {
-		n, err := connection.Read(buffer)
+		nextMessage, err := parser.ParseInput(connection)
 		if err != nil {
-			if err == io.EOF {
-				slog.Debug("Client disconnected")
-				break
-			}
 			slog.Error(fmt.Sprintf("Error reading request: %v", err))
 			connection.Write([]byte("-Error reading request"))
 			break
 		}
 
-		input := buffer[:n]
-
-		message, err := parser.ReadMessage(string(input))
-
-		if err != nil {
-			slog.Error(fmt.Sprintf("Error parsing request: %v\n", err))
-			connection.Write([]byte("-Error parsing request"))
-			continue
-		} else if message.Completed {
-			response := handleResponse(message, inMemoryDB)
-			connection.Write([]byte(response))
-		}
+		response := handleResponse(nextMessage, inMemoryDB)
+		slog.Debug("Sending response: " + response.ResponseString())
+		connection.Write([]byte(response.ResponseString()))
 	}
 }
 
-func handleResponse(message *message.Message, inMemoryDB *InMemoryDB) string {
-	tokens := message.Tokens
-	messageType := tokens[0]
-
-	switch strings.ToUpper(messageType) {
-	case "PING":
-		return "+PONG\r\n"
-	case "ECHO":
-		if len(tokens) != 2 {
-			return "-Wrong number of arguments for 'ECHO' command\r\n"
+func handleResponse(message parser.RespMessage, inMemoryDB *InMemoryDB) parser.RespMessage {
+	slog.Debug("Handling request")
+	slog.Debug(parser.PrintRespMessage(message))
+	switch msg := message.(type) {
+	case parser.RespSimpleString:
+		return parser.NewSimpleString("OK")
+	case parser.RespArray:
+		command := msg[0]
+		if command, ok := command.(parser.RespBulkString); !ok {
+			return parser.NewError("Wrong value sent in array command")
+		} else {
+			switch strings.ToUpper(string(command)) {
+			case "PING":
+				return parser.NewSimpleString("PONG")
+			case "ECHO":
+				return handleECHO(msg)
+			case "GET":
+				return handleGET(msg, inMemoryDB)
+			case "SET":
+				return handleSET(msg, inMemoryDB)
+			default:
+				slog.Debug("Invalid command sent to array", "msg", msg[0])
+				return parser.NewError("Unexpected command sent in array")
+			}
 		}
-		echoed := tokens[1]
-		return fmt.Sprintf("$%d\r\n%s\r\n", len(echoed), echoed)
-	case "SET":
-		if len(tokens) != 3 {
-			return "-Wrong number of arguments for 'SET' command\r\n"
-		}
-		key := tokens[1]
-		value := tokens[2]
-		inMemoryDB.writeValue(key, value)
-		return "+OK\r\n"
-	case "GET":
-		if len(tokens) != 2 {
-			return "-Wrong number of arguments for 'GET' command\r\n"
-		}
-		key := tokens[1]
-		value, ok := inMemoryDB.getValue(key)
-		if !ok {
-			return "$-1\r\n"
-		}
-		return fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)
 	default:
-		return "-Unsupported command\r\n"
+		return parser.NewError("Unexpected command")
+	}
+}
+
+func handleECHO(msg parser.RespArray) parser.RespMessage {
+	if len(msg) != 2 {
+		return parser.NewError("Wrong number of arguments for 'ECHO' command")
+	}
+	echoed := msg[1]
+	if echoed, ok := echoed.(parser.RespBulkString); ok {
+		return parser.NewBulkString(echoed)
+	} else {
+		return parser.NewError("Expected string passed to ECHO")
+	}
+}
+
+func handleSET(msg parser.RespArray, inMemoryDB *InMemoryDB) parser.RespMessage {
+	if len(msg) < 3 {
+		return parser.NewError("Wrong number of arguments for 'SET' command")
+	}
+	key := msg[1]
+	value := msg[2]
+	parsedKey := ""
+	parsedValue := ""
+	if key, ok := key.(parser.RespBulkString); ok {
+		parsedKey = string(key)
+	} else {
+		return parser.NewError("Expected string as key passed to SET")
+	}
+
+	if value, ok := value.(parser.RespBulkString); ok {
+		parsedValue = string(value)
+	} else {
+		return parser.NewError("Expected string as value passed to SET")
+	}
+	inMemoryDB.writeValue(parsedKey, parsedValue)
+	return parser.RespSimpleString("OK")
+}
+
+func handleGET(msg parser.RespArray, inMemoryDB *InMemoryDB) parser.RespMessage {
+	if len(msg) < 2 {
+		return parser.NewError("Wrong number of arguments for 'GET' command")
+	}
+	key := msg[1]
+	if key, ok := key.(parser.RespBulkString); ok {
+		value, ok := inMemoryDB.getValue(string(key))
+		if !ok {
+			return parser.NewBulkString(nil)
+		}
+		return parser.NewBulkString([]byte(value))
+	} else {
+		return parser.NewError("Expected string passed to ECHO")
 	}
 }
